@@ -1,10 +1,11 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDropzone } from "react-dropzone";
 import { Link } from "react-router-dom";
 import {
   Upload, FileText, ShieldAlert, Users, Lightbulb, Volume2, VolumeX,
-  Send, ArrowLeft, Bot, User
+  Send, ArrowLeft, Bot, User, CloudUpload, FileCheck, Sparkles, Scan,
+  CheckCircle2, X, File
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -16,7 +17,6 @@ const fadeUp = {
   }),
 };
 
-// Mock analysis results
 const mockAnalysis = {
   explanation:
     "This is a residential lease agreement between a landlord and tenant for a property located in Mumbai. The agreement spans 11 months with a monthly rent of ₹25,000. It includes standard clauses about security deposit, maintenance responsibilities, and termination conditions.",
@@ -64,10 +64,119 @@ interface ChatMessage {
   content: string;
 }
 
+// Analyzing animation component
+const AnalyzingOverlay = ({ progress }: { progress: number }) => {
+  const stages = [
+    { icon: Scan, label: "Extracting text...", threshold: 0 },
+    { icon: FileCheck, label: "Parsing document structure...", threshold: 25 },
+    { icon: Sparkles, label: "Running AI analysis...", threshold: 55 },
+    { icon: CheckCircle2, label: "Generating insights...", threshold: 80 },
+  ];
+
+  const currentStage = stages.filter(s => progress >= s.threshold).length - 1;
+
+  return (
+    <motion.div
+      className="mt-8 glass rounded-2xl p-10 glow-border overflow-hidden relative"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ duration: 0.4 }}
+    >
+      {/* Animated background scan line */}
+      <motion.div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: "linear-gradient(180deg, transparent 0%, hsl(175 80% 50% / 0.03) 50%, transparent 100%)",
+        }}
+        animate={{ y: ["-100%", "100%"] }}
+        transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+      />
+
+      <div className="text-center mb-8">
+        <motion.div
+          className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-4"
+          animate={{ rotate: [0, 5, -5, 0] }}
+          transition={{ duration: 2, repeat: Infinity }}
+        >
+          <Sparkles className="h-8 w-8 text-primary" />
+        </motion.div>
+        <h3 className="text-xl font-semibold">Analyzing Document</h3>
+        <p className="text-muted-foreground text-sm mt-1">AI is processing your document...</p>
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-full max-w-md mx-auto mb-8">
+        <div className="h-2 rounded-full bg-muted overflow-hidden">
+          <motion.div
+            className="h-full rounded-full"
+            style={{
+              background: "linear-gradient(90deg, hsl(175 80% 50%), hsl(260 60% 55%))",
+            }}
+            initial={{ width: "0%" }}
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.3 }}
+          />
+        </div>
+        <p className="text-right text-xs text-muted-foreground mt-2">{Math.round(progress)}%</p>
+      </div>
+
+      {/* Steps */}
+      <div className="space-y-3 max-w-sm mx-auto">
+        {stages.map((stage, i) => {
+          const isActive = i === currentStage;
+          const isDone = i < currentStage;
+          return (
+            <motion.div
+              key={stage.label}
+              className={`flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-300 ${
+                isActive ? "glass border border-primary/30" : isDone ? "opacity-60" : "opacity-30"
+              }`}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: isDone ? 0.6 : isActive ? 1 : 0.3, x: 0 }}
+              transition={{ delay: i * 0.15, duration: 0.4 }}
+            >
+              {isDone ? (
+                <CheckCircle2 className="h-5 w-5 text-primary shrink-0" />
+              ) : isActive ? (
+                <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}>
+                  <stage.icon className="h-5 w-5 text-primary shrink-0" />
+                </motion.div>
+              ) : (
+                <stage.icon className="h-5 w-5 text-muted-foreground shrink-0" />
+              )}
+              <span className={`text-sm ${isActive ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+                {stage.label}
+              </span>
+              {isActive && (
+                <motion.div
+                  className="ml-auto flex gap-1"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                >
+                  {[0, 1, 2].map(d => (
+                    <motion.div
+                      key={d}
+                      className="w-1.5 h-1.5 rounded-full bg-primary"
+                      animate={{ opacity: [0.3, 1, 0.3] }}
+                      transition={{ duration: 1, delay: d * 0.2, repeat: Infinity }}
+                    />
+                  ))}
+                </motion.div>
+              )}
+            </motion.div>
+          );
+        })}
+      </div>
+    </motion.div>
+  );
+};
+
 const AnalyzerPage = () => {
   const [file, setFile] = useState<File | null>(null);
   const [analyzed, setAnalyzed] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -84,6 +193,8 @@ const AnalyzerPage = () => {
       if (files[0]) {
         setFile(files[0]);
         setAnalyzed(false);
+        setAnalyzing(false);
+        setAnalyzeProgress(0);
         setChatMessages([]);
       }
     },
@@ -91,10 +202,35 @@ const AnalyzerPage = () => {
 
   const handleAnalyze = () => {
     setAnalyzing(true);
-    setTimeout(() => {
-      setAnalyzing(false);
-      setAnalyzed(true);
-    }, 2000);
+    setAnalyzeProgress(0);
+  };
+
+  useEffect(() => {
+    if (!analyzing) return;
+    const interval = setInterval(() => {
+      setAnalyzeProgress(prev => {
+        if (prev >= 100) {
+          clearInterval(interval);
+          setTimeout(() => {
+            setAnalyzing(false);
+            setAnalyzed(true);
+          }, 400);
+          return 100;
+        }
+        // Variable speed for realism
+        const increment = prev < 25 ? 3 : prev < 55 ? 2 : prev < 80 ? 1.5 : 4;
+        return Math.min(prev + increment, 100);
+      });
+    }, 80);
+    return () => clearInterval(interval);
+  }, [analyzing]);
+
+  const handleRemoveFile = () => {
+    setFile(null);
+    setAnalyzed(false);
+    setAnalyzing(false);
+    setAnalyzeProgress(0);
+    setChatMessages([]);
   };
 
   const handleSpeak = () => {
@@ -159,6 +295,9 @@ const AnalyzerPage = () => {
     },
   ];
 
+  const fileIcon = file?.type === "application/pdf" ? FileText : File;
+  const FileIcon = fileIcon;
+
   return (
     <div className="min-h-screen gradient-mesh">
       {/* Nav */}
@@ -172,50 +311,135 @@ const AnalyzerPage = () => {
       </nav>
 
       <div className="container mx-auto pt-28 pb-20 px-6 max-w-4xl">
-        {/* Upload */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <div
-            {...getRootProps()}
-            className={`glass rounded-2xl p-10 text-center cursor-pointer border-2 border-dashed transition-all duration-300
-              ${isDragActive ? "border-primary bg-primary/5" : "border-border/50 hover:border-primary/40 hover:bg-card/80"}`}
-          >
-            <input {...getInputProps()} />
-            <Upload className="h-12 w-12 text-primary mx-auto mb-4" />
-            <p className="text-lg font-medium">
-              {isDragActive ? "Drop your document here" : "Drag & drop or click to upload"}
-            </p>
-            <p className="text-muted-foreground text-sm mt-2">Supports PDF, JPG, PNG</p>
-          </div>
+        {/* Header */}
+        <motion.div
+          className="text-center mb-10"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <h1 className="text-3xl md:text-4xl font-bold">
+            Document <span className="glow-text">Analyzer</span>
+          </h1>
+          <p className="text-muted-foreground mt-2">Upload a legal document and let AI break it down for you</p>
         </motion.div>
 
-        {/* File info */}
-        {file && !analyzed && (
-          <motion.div
-            className="mt-6 glass rounded-xl p-6 flex items-center justify-between"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <div className="flex items-center gap-3">
-              <FileText className="h-5 w-5 text-primary" />
-              <span className="font-medium">{file.name}</span>
-              <span className="text-muted-foreground text-sm">({(file.size / 1024).toFixed(1)} KB)</span>
-            </div>
-            <Button
-              onClick={handleAnalyze}
-              disabled={analyzing}
-              className="bg-primary text-primary-foreground hover:scale-105 transition-transform"
+        {/* Upload area */}
+        <AnimatePresence mode="wait">
+          {!file ? (
+            <motion.div
+              key="upload"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.4 }}
             >
-              {analyzing ? "Analyzing..." : "Analyze"}
-            </Button>
-          </motion.div>
-        )}
+              <div
+                {...getRootProps()}
+                className={`relative rounded-2xl p-16 text-center cursor-pointer border-2 border-dashed transition-all duration-500 group overflow-hidden
+                  ${isDragActive
+                    ? "border-primary bg-primary/5 scale-[1.02]"
+                    : "border-border/50 hover:border-primary/50 glass"
+                  }`}
+              >
+                <input {...getInputProps()} />
+
+                {/* Animated corner accents */}
+                <div className="absolute top-3 left-3 w-8 h-8 border-t-2 border-l-2 border-primary/30 rounded-tl-lg group-hover:border-primary/60 transition-colors" />
+                <div className="absolute top-3 right-3 w-8 h-8 border-t-2 border-r-2 border-primary/30 rounded-tr-lg group-hover:border-primary/60 transition-colors" />
+                <div className="absolute bottom-3 left-3 w-8 h-8 border-b-2 border-l-2 border-primary/30 rounded-bl-lg group-hover:border-primary/60 transition-colors" />
+                <div className="absolute bottom-3 right-3 w-8 h-8 border-b-2 border-r-2 border-primary/30 rounded-br-lg group-hover:border-primary/60 transition-colors" />
+
+                <motion.div
+                  animate={isDragActive ? { scale: 1.1, y: -5 } : { scale: 1, y: 0 }}
+                  transition={{ type: "spring", stiffness: 300 }}
+                >
+                  <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6 group-hover:bg-primary/15 transition-colors">
+                    <CloudUpload className="h-10 w-10 text-primary" />
+                  </div>
+                </motion.div>
+
+                <p className="text-xl font-semibold mb-2">
+                  {isDragActive ? "Drop your document here" : "Upload your legal document"}
+                </p>
+                <p className="text-muted-foreground mb-6">
+                  Drag & drop or click to browse your files
+                </p>
+
+                <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
+                  {[
+                    { label: "PDF", color: "bg-destructive/20 text-destructive" },
+                    { label: "JPG", color: "bg-primary/20 text-primary" },
+                    { label: "PNG", color: "bg-secondary/20 text-secondary" },
+                  ].map(f => (
+                    <span key={f.label} className={`px-3 py-1 rounded-full font-mono font-medium ${f.color}`}>
+                      .{f.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          ) : !analyzing && !analyzed ? (
+            <motion.div
+              key="file-info"
+              className="glass rounded-2xl p-8 glow-border"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.4 }}
+            >
+              <div className="flex items-center gap-5">
+                <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                  <FileIcon className="h-7 w-7 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-lg truncate">{file.name}</p>
+                  <p className="text-muted-foreground text-sm mt-0.5">
+                    {(file.size / 1024).toFixed(1)} KB • {file.type.split("/")[1]?.toUpperCase()}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleRemoveFile}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <X className="h-5 w-5" />
+                  </Button>
+                  <Button
+                    onClick={handleAnalyze}
+                    size="lg"
+                    className="bg-primary text-primary-foreground hover:scale-105 transition-transform animate-glow-pulse gap-2 px-6"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Analyze Document
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        {/* Analyzing animation */}
+        <AnimatePresence>
+          {analyzing && <AnalyzingOverlay progress={analyzeProgress} />}
+        </AnimatePresence>
 
         {/* Results */}
         <AnimatePresence>
           {analyzed && (
             <motion.div className="mt-10 space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              {/* Voice button */}
-              <div className="flex justify-end">
+              {/* Top bar: re-upload + voice */}
+              <div className="flex items-center justify-between">
+                <Button
+                  variant="outline"
+                  onClick={handleRemoveFile}
+                  className="border-border/50 text-muted-foreground hover:text-foreground gap-2"
+                >
+                  <Upload className="h-4 w-4" />
+                  Upload New
+                </Button>
                 <Button
                   variant="outline"
                   onClick={handleSpeak}
@@ -266,9 +490,7 @@ const AnalyzerPage = () => {
                         {["Do I own this property?", "Is this contract risky?", "What if the tenant breaks the agreement?"].map((q) => (
                           <button
                             key={q}
-                            onClick={() => {
-                              setChatInput(q);
-                            }}
+                            onClick={() => setChatInput(q)}
                             className="text-xs glass rounded-full px-4 py-2 text-primary hover:bg-primary/10 transition-colors"
                           >
                             {q}
